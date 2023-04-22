@@ -77,4 +77,12 @@ class Product
 
         return $this;
     }
+
+    /**
+     * @param int|null $id
+     */
+    public function setId(?int $id): void
+    {
+        $this->id = $id;
+    }
 }

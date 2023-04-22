@@ -2,6 +2,7 @@
 
 namespace App\Controller;
 
+use App\Entity\Cart;
 use App\Entity\Item;
 use App\Factory\CartFactory;
 use App\Repository\CartRepository;
@@ -13,35 +14,26 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Annotation\Route;
-use Symfony\Component\Serializer\Encoder\JsonEncoder;
-use Symfony\Component\Serializer\Encoder\XmlEncoder;
+use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
-use Symfony\Component\Serializer\Serializer;
 
 #[Route(path: "/carts", name: "carts_")]
 class CartController extends AbstractController
 {
 
-    private Serializer $serializer;
-
     public function __construct(
-        private CartRepository $cartRepo,
-        private ProductRepository $productRepo,
-        private ItemRepository $itemRepo
-
+        private readonly CartRepository    $cartRepo,
+        private readonly ProductRepository $productRepo,
+        private readonly ItemRepository    $itemRepo
     )
     {
-        $encoders = [new XmlEncoder(), new JsonEncoder()];
-        $normalizers = [new ObjectNormalizer()];
-
-        $this->serializer = new Serializer($normalizers, $encoders);
     }
 
     #[Route(path: "", name: "all", methods: ["GET"])]
     public function all(): Response
     {
         $carts = $this->cartRepo->findAll();
-        return new Response($this->serializer->serialize($carts, "json"));
+        return $this->json($carts, 201, [], [ObjectNormalizer::IGNORED_ATTRIBUTES => ['cart']]);
     }
 
     #[Route(path: "/{id}", name: "byId", methods:["GET"])]
@@ -49,7 +41,7 @@ class CartController extends AbstractController
     {
         $cart = $this->cartRepo->findOneBy(["id" => $id]);
         if ($cart) {
-            return new Response($this->serializer->serialize($cart, "json"));
+            return $this->json($cart, 200, [], [ObjectNormalizer::IGNORED_ATTRIBUTES => ['cart']]);
         } else {
             throw new NotFoundHttpException("Cart not found by id:" . $id);
         }
@@ -61,20 +53,74 @@ class CartController extends AbstractController
         $cart = CartFactory::create();
         $this->cartRepo->save($cart, true);
 
-        return $this->json($this->serializer->serialize($cart, "json"), 201);
+        return $this->json($cart, 201, [], []);
     }
 
     #[Route(path: "/{id}", name: "addProduct", methods: ["POST"])]
     public function addProduct(int $id, Request $request): Response
     {
         $cart = $this->cartRepo->findOneBy(["id" => $id]);
-        // TODO: fix and refactor these entities
+        if (!$cart) {
+            throw new NotFoundHttpException("Cart not found by id:" . $id);
+        }
 
+        // TODO: refactor this to some service
 
+        $data = json_decode($request->getContent(), true);
+        $productId = $data['product_id'] ?? null;
+        $quantity = $data['quantity'] ?? null;
+        $product = $this->validateProductInput($productId, $quantity);
 
-        return new Response($this->serializer->serialize($cart, "json"));
+        $item = new Item();
+        $item->setProduct($product);
+        $item->setQuantity($quantity);
 
+        $cart->addItem($item);
+
+        $this->cartRepo->save($cart, true);
+
+        return $this->json($cart, 201, [], [AbstractNormalizer::IGNORED_ATTRIBUTES => ['cart']]);
     }
 
-    // TODO: add PUT endpoint or some way to edit a products quantity and remove on 0
+    #[Route(path: "/{id}/items/{itemId}", name: "removeCartItem", methods: ["DELETE"])]
+    public function removeItem(Cart $cart, int $itemId): Response
+    {
+        $item = $this->itemRepo->find($itemId);
+
+        if (!$item) {
+            return $this->json(['message' => 'Item not found'], Response::HTTP_NOT_FOUND);
+        }
+
+        if ($item->getCart() !== $cart) {
+            return $this->json(['message' => 'Item does not belong to the given cart'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $this->itemRepo->remove($item, true);
+
+        return $this->json(['message' => 'Item removed from cart'], Response::HTTP_OK);
+    }
+
+    /**
+     * @param Cart|null $cart
+     * @param int $id
+     * @param mixed $productId
+     * @param mixed $quantity
+     * @return \App\Entity\Product
+     */
+    public function validateProductInput(mixed $productId, mixed $quantity): \App\Entity\Product
+    {
+        if (empty($productId) || !is_int($quantity) || !is_int($productId)) {
+            throw new BadRequestHttpException("product_id and quantity of type int required");
+        }
+
+        if ($quantity < 1) {
+            throw new BadRequestHttpException("quantity should not be less than 1");
+        }
+
+        $product = $this->productRepo->findOneBy(["id" => $productId]);
+        if (!$product) {
+            throw new NotFoundHttpException("Product not found by id:" . $productId);
+        }
+        return $product;
+    }
 }

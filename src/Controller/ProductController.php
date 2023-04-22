@@ -21,7 +21,7 @@ class ProductController extends AbstractController
     private Serializer $serializer;
 
     public function __construct(
-        private ProductRepository $productRepo
+        private readonly ProductRepository $productRepo
     )
     {
         $encoders = [new XmlEncoder(), new JsonEncoder()];
